@@ -19,3 +19,16 @@ func GetArtistes() ([]Artist, error) {
 	err = json.NewDecoder(resp.Body).Decode(&artistes)
 	return artistes, err
 }
+
+// GetRelations fonctionne de la même manière mais pour le lien concerts/dates
+func GetRelations() (RelationData, error) {
+	var data RelationData
+	resp, err := http.Get("https://groupietrackers.herokuapp.com/api/relation")
+	if err != nil {
+		return data, err
+	}
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&data)
+	return data, err
+}
