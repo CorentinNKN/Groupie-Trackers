@@ -1,5 +1,8 @@
 package main
 
+var LoadedLocations AllLocations
+var LoadedRelations AllRelations
+
 type Artist struct {
 	ID           int      `json:"id"`
 	Image        string   `json:"image"`
@@ -17,4 +20,15 @@ type LocationData struct {
 
 type AllLocations struct {
 	Index []LocationData `json:"index"`
+}
+
+// Structure pour une relation unique (liée à un artiste)
+type RelationData struct {
+	ID             int                 `json:"id"`
+	DatesLocations map[string][]string `json:"datesLocations"`
+}
+
+// Structure pour l'index global des relations (si tu en as besoin)
+type AllRelations struct {
+	Index []RelationData `json:"index"`
 }

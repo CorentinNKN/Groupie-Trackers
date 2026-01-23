@@ -1,125 +1,168 @@
 package main
 
-import (
-	"fmt"
-	"strings"
+import ( //outils hbt de go 1et2
+	"fmt" //1format: permet de mélanger nombre+mot
+	"image/color"
+	"strings" //2 que pour les phrases/mots
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
+	"fyne.io/fyne/v2"           //unité de mesure fyne largeur/ hauteur
+	"fyne.io/fyne/v2/app"       // permet de lancer l'applicqation avec "app.New()"
+	"fyne.io/fyne/v2/canvas"    //sert à afficher l'image de l'artiste:"canvas.NewImageFromURI"
+	"fyne.io/fyne/v2/container" //
+	"fyne.io/fyne/v2/dialog"    // Permet d'afficher un msg d'erreur si l'api ne répond pas
+	"fyne.io/fyne/v2/storage"   // permet de gérer les liens internet
+	"fyne.io/fyne/v2/widget"    // widget: barre de recherche, bouton, cardre (card)
 )
 
-var (
-	AllArtists  []Artist
-	DisplayGrid *fyne.Container
-	// On stocke les références des widgets pour lire leurs valeurs
-	memberChecks   = make(map[int]*widget.Check)
-	creationSlider *widget.Slider
-	albumEntry     *widget.Entry
-	citySelect     *widget.Select
-)
+// VARIABLES GLOBALES
+// Je les mets ici pour qu'elles soient accessibles partout dans le code
+// listeArtistes :  copie complète données reçues de l'API
+// grilleArtistes : zone visuelle où on affiche les cartes
+var listeArtistes []Artist
+var grilleArtistes *fyne.Container
+var maFenetre fyne.Window
 
-func SetupUI(w fyne.Window) {
-	// Initialisation de la grille d'affichage
-	DisplayGrid = container.NewGridWithColumns(3) // 3 colonnes d'artistes
+func main() {
+	//CRÉATION DE LA FENÊTRE, initialise l'application -> titre à ma fenêtre.
 
-	// Création du panneau de filtres
-	filterPanel := createFilterPanel()
+	monApp := app.New()
+	maFenetre = monApp.NewWindow("Groupie Tracker - Mon Projet B1")
+	maFenetre.Resize(fyne.NewSize(1000, 800)) // Je définis une taille de départ confortable
 
-	// Layout principal : Filtres à gauche (Scrollable), Artistes à droite
-	mainContent := container.NewHSplit(
-		container.NewVScroll(filterPanel),
-		container.NewVScroll(DisplayGrid),
+	// RÉCUPÉRATION DES DONNÉES (BACKEND)
+	// Ici, j'appelle la fonction GetArtistes() (dans api-manager.go)
+	// Cela me permet de récupérer la vraie liste depuis Internet
+	var err error
+	listeArtistes, err = GetArtistes()
+
+	// Si Internet ne marche pas, j'affiche une erreur à l'utilisateur
+	if err != nil {
+		dialog.ShowError(err, maFenetre)
+	}
+
+	//LA BARRE DE RECHERCHE
+	entreeRecherche := widget.NewEntry()
+	entreeRecherche.SetPlaceHolder("Tapez le nom d'un groupe (ex: Queen)...")
+
+	// C'est ici que je gère l'interaction :
+	// À chaque fois que l'utilisateur tape une lettre (OnChanged),
+	// je lance ma fonction de filtre.
+	entreeRecherche.OnChanged = func(texte string) {
+		filtrerArtistes(texte)
+	}
+
+	// LA GRILLE D'AFFICHAGE
+	// J'utilise un GridWrap : c'est un conteneur intelligent qui place
+	// les cartes à la ligne automatiquement quand il n'y a plus de place.
+	grilleArtistes = container.NewGridWrap(fyne.NewSize(200, 300))
+
+	// Au démarrage, j'appelle ma fonction avec un texte vide ("")
+	// pour dire : "Affiche tout le monde sans filtre".
+	filtrerArtistes("")
+
+	// J'ajoute un ascenseur (Scroll) car il y a 52 artistes, ça dépasse l'écran.
+	zoneDefilement := container.NewVScroll(grilleArtistes)
+
+	// MISE EN PAGE (LAYOUT)
+	// J'organise l'onglet Accueil avec un "BorderLayout" :
+	// - En Haut : La barre de recherche (avec un peu de marge/padding)
+	// - Au Centre : La grille défilante
+	contenuAccueil := container.NewBorder(
+		container.NewPadded(entreeRecherche),
+		nil, nil, nil,
+		zoneDefilement,
 	)
-	mainContent.Offset = 0.2 // 20% pour les filtres, 80% pour les artistes
 
-	w.SetContent(mainContent)
-	RefreshDisplay() // Premier affichage
-}
+	// LES ONGLETS (NAVIGATION)
+	// créationonglets pour la future carte+les favoris
+	labelCarte := widget.NewLabel("La carte du monde sera affichée ici.")
+	labelCarte.Alignment = fyne.TextAlignCenter
 
-func createFilterPanel() *fyne.Container {
-	// 1. Membres
-	membersBox := container.NewVBox(widget.NewLabel("Nombre de membres :"))
-	for i := 1; i <= 7; i++ {
-		val := i
-		cb := widget.NewCheck(fmt.Sprintf("%d membres", i), func(b bool) { RefreshDisplay() })
-		memberChecks[val] = cb
-		membersBox.Add(cb)
-	}
+	labelFavoris := widget.NewLabel("La liste des favoris sera affichée ici.")
+	labelFavoris.Alignment = fyne.TextAlignCenter
 
-	// 2. Date de création
-	creationSlider = widget.NewSlider(1950, 2024)
-	creationLabel := widget.NewLabel("Année min : 1950")
-	creationSlider.OnChanged = func(v float64) {
-		creationLabel.SetText(fmt.Sprintf("Année min : %.0f", v))
-		RefreshDisplay()
-	}
-
-	// 3. Premier Album
-	albumEntry = widget.NewEntry()
-	albumEntry.SetPlaceHolder("Année album...")
-	albumEntry.OnChanged = func(s string) { RefreshDisplay() }
-
-	// 4. Localisation
-	citySelect = widget.NewSelect(GetAllCities(), func(s string) { RefreshDisplay() })
-	citySelect.PlaceHolder = "Choisir une ville"
-
-	return container.NewVBox(
-		widget.NewLabel("--- FILTRES ---"),
-		membersBox,
-		widget.NewSeparator(),
-		creationLabel, creationSlider,
-		widget.NewSeparator(),
-		widget.NewLabel("Premier Album :"),
-		albumEntry,
-		widget.NewSeparator(),
-		widget.NewLabel("Ville :"),
-		citySelect,
+	lesOnglets := container.NewAppTabs(
+		container.NewTabItem("Catalogue", contenuAccueil),
+		container.NewTabItem("Carte", labelCarte),
+		container.NewTabItem("Favoris", labelFavoris),
 	)
+
+	// LANCEMENT
+	// J'intègre les onglets dans la fenêtre et je lance la boucle infinie sinon prog s'arrete
+	maFenetre.SetContent(lesOnglets)
+	maFenetre.ShowAndRun()
 }
 
-func RefreshDisplay() {
-	DisplayGrid.Objects = nil // On vide tout
+// LE FILTRE
+// Cette fonction est appelée quand on tape dans la barre de recherche
+func filtrerArtistes(recherche string) {
+	// 1. Je commence par vider la grille pour ne pas empiler les résultats
+	grilleArtistes.Objects = nil
 
-	for _, artist := range AllArtists {
-		// Logique de filtrage
-		if !matchMembers(artist) {
-			continue
-		}
-		if float64(artist.CreationDate) < creationSlider.Value {
-			continue
-		}
-		if albumEntry.Text != "" && !strings.Contains(artist.FirstAlbum, albumEntry.Text) {
-			continue
-		}
-		if !matchCity(artist) {
-			continue
-		}
+	// 2. Je parcours ma liste complète d'artistes (boucle For Range)
+	for _, artiste := range listeArtistes {
 
-		// Si OK, on ajoute la carte de l'artiste
-		DisplayGrid.Add(widget.NewLabel(artist.Name)) // Remplace par ta fonction CreateArtistCard
+		// tout en minuscule pour que la recherche ne soit pas sensible à la casse
+		// (Comme ça "queen" trouve bien "Queen").
+		nomMinuscule := strings.ToLower(artiste.Name)
+		rechercheMinuscule := strings.ToLower(recherche)
+
+		// 3. Condition : Si le nom contient le texte cherché OU si la recherche est vide...
+		if strings.Contains(nomMinuscule, rechercheMinuscule) || recherche == "" {
+			// ... Alors je crée la carte visuelle et je l'ajoute à la grille
+			carte := creerUneCarte(artiste)
+			grilleArtistes.Add(carte)
+		}
 	}
-	DisplayGrid.Refresh()
+
+	// 4. Important : Je demande à Fyne de rafraîchir l'affichage pour voir les changements
+	grilleArtistes.Refresh()
 }
 
-func matchMembers(a Artist) bool {
-	checkedCount := 0
-	for _, cb := range memberChecks {
-		if cb.Checked {
-			checkedCount++
-		}
-	}
-	if checkedCount == 0 {
-		return true
-	} // Si rien n'est coché, on affiche tout
-	return memberChecks[len(a.Members)].Checked
-}
+// -> FONCTION VISUELLE : CRÉATION D'UNE CARTE COLORÉE
+func creerUneCarte(a Artist) fyne.CanvasObject {
+	// 1. CRÉATION DE LA BOÎTE
+	contenu := container.NewVBox()
 
-func matchCity(a Artist) bool {
-	if citySelect.Selected == "" || citySelect.Selected == "Toutes" {
-		return true
+	// 2. GESTION DE L'IMAGE (inchangée)
+	lien, err := storage.ParseURI(a.Image)
+	if err == nil {
+		image := canvas.NewImageFromURI(lien)
+		image.FillMode = canvas.ImageFillContain
+		image.SetMinSize(fyne.NewSize(150, 150))
+		contenu.Add(image)
 	}
-	// Ici tu dois comparer citySelect.Selected avec les données de l'API Locations
-	// que tu auras pré-chargées.
-	return true
+
+	// --- COULEUR 1 : VIOLET pour le NOM ---
+	// R=Rouge, G=Vert, B=Bleu, A=Opacité (255 = visible à fond)
+	couleurViolette := color.NRGBA{R: 138, G: 43, B: 226, A: 255}
+
+	// On utilise canvas.NewText au lieu de widget.NewLabel
+	texteNom := canvas.NewText(a.Name, couleurViolette)
+	texteNom.Alignment = fyne.TextAlignCenter
+	texteNom.TextSize = 20                          // On grossit un peu le texte
+	texteNom.TextStyle = fyne.TextStyle{Bold: true} // En gras
+
+	contenu.Add(texteNom) // On ajoute le texte violet
+
+	// COULEUR 2 : VERT POMME pour la DATE
+	couleurPomme := color.NRGBA{R: 50, G: 205, B: 50, A: 255}
+
+	strDate := fmt.Sprintf("Création : %d", a.CreationDate)
+	texteDate := canvas.NewText(strDate, couleurPomme)
+	texteDate.Alignment = fyne.TextAlignCenter
+	texteDate.TextSize = 14
+
+	contenu.Add(texteDate) // On ajoute le texte vert
+
+	// 5. GESTION DU BOUTON
+	bouton := widget.NewButton("Voir Détails", func() {
+		message := "Nom : " + a.Name + "\n" + "Date : " + fmt.Sprint(a.CreationDate)
+		dialog.ShowInformation("Détails", message, maFenetre)
+	})
+	contenu.Add(bouton)
+
+	// 6. FINITION
+	card := widget.NewCard("", "", contenu)
+	return card
 }
