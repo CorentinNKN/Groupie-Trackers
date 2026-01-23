@@ -32,3 +32,24 @@ func GetRelations() (RelationData, error) {
 	err = json.NewDecoder(resp.Body).Decode(&data)
 	return data, err
 }
+
+func GetAllCities() []string {
+	// 1. Appelle l'endpoint /locations
+	// 2. Parcoure tous les artistes
+	// 3. Stocke les villes dans une Map pour éviter les doublons
+	cityMap := make(map[string]bool)
+	cityMap["Toutes"] = true
+
+	// Exemple de boucle sur tes données récupérées
+	for _, data := range LoadedLocations.Index {
+		for _, city := range data.Locations {
+			cityMap[city] = true
+		}
+	}
+
+	var cities []string
+	for city := range cityMap {
+		cities = append(cities, city)
+	}
+	return cities
+}
